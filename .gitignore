@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+storage/*.db
+storage/*.sqlite
+storage/*.sqlite3
+
+# Generated forensic reports
+reports/*.pdf
+
+# Editor files
+.vscode/
