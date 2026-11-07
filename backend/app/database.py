@@ -14,9 +14,14 @@ def get_connection() -> Iterator[sqlite3.Connection]:
     database_path = Path(config.DATABASE_PATH)
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
-    connection = sqlite3.connect(database_path)
+    connection = sqlite3.connect(database_path, timeout=5.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.DatabaseError:
+        pass
     try:
         yield connection
         connection.commit()
@@ -74,3 +79,37 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                report_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES cases(case_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_evidence_events_case_id
+            ON evidence_events (case_id, event_timestamp)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reports_case_id
+            ON reports (case_id, generated_at)
+            """
+        )
+
+
+def database_is_ready() -> bool:
+    """Return whether a trivial query can be executed."""
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+    except sqlite3.Error:
+        return False
+    return True

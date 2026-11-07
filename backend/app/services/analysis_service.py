@@ -184,5 +184,11 @@ def analysis_from_storage(row: dict[str, Any]) -> dict[str, Any]:
     case = dict(row)
     for field in ("indicators", "recommended_actions", "limitations"):
         value = case.get(field)
-        case[field] = json.loads(value) if value is not None else None
+        if value is None:
+            case[field] = None
+            continue
+        try:
+            case[field] = json.loads(value)
+        except json.JSONDecodeError:
+            case[field] = None
     return case
