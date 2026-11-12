@@ -13,12 +13,12 @@ venv/
 !.env.example
 
 # SQLite databases
-storage/*.db
-storage/*.sqlite
-storage/*.sqlite3
+storage/*
+!storage/.gitkeep
 
 # Generated forensic reports
-reports/*.pdf
+reports/*
+!reports/.gitkeep
 
 # Editor files
 .vscode/

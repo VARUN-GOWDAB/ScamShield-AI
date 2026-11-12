@@ -1,0 +1,17 @@
+[server]
+headless = true
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#0f5c59"
+backgroundColor = "#f7f4ef"
+secondaryBackgroundColor = "#efeae2"
+textColor = "#1c2430"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

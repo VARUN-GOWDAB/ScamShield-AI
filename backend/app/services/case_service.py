@@ -80,19 +80,28 @@ def create_case(evidence_type: str, original_content: str) -> dict[str, Any]:
     return case
 
 
-def get_all_cases() -> list[dict[str, Any]]:
-    """Return all cases, newest first."""
+def get_all_cases(
+    limit: int | None = None, offset: int = 0
+) -> list[dict[str, Any]]:
+    """Return cases, newest first. Omit limit to return the full list."""
+    query = """
+        SELECT case_id, evidence_type, analysis_status,
+               risk_level, scam_type, summary, created_at,
+               evidence_sha256, evidence_collected_at, indicators,
+               recommended_actions, limitations, analysis_provider
+        FROM cases
+        ORDER BY created_at DESC, case_id DESC
+    """
+    parameters: list[Any] = []
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        parameters.extend([limit, offset])
+    elif offset:
+        query += " LIMIT -1 OFFSET ?"
+        parameters.append(offset)
+
     with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT case_id, evidence_type, original_content, analysis_status,
-                   risk_level, scam_type, summary, created_at,
-                   evidence_sha256, evidence_collected_at, indicators,
-                   recommended_actions, limitations, analysis_provider
-            FROM cases
-            ORDER BY created_at DESC, case_id DESC
-            """
-        ).fetchall()
+        rows = connection.execute(query, parameters).fetchall()
     return [analysis_from_storage(dict(row)) for row in rows]
 
 
@@ -158,17 +167,29 @@ def save_analysis(
     return get_case(case_id)
 
 
-def mark_analysis_failed(case_id: str, provider: str, details: str) -> None:
-    """Record an analysis failure without changing the preserved evidence."""
+def mark_analysis_failed(
+    case_id: str,
+    provider: str,
+    details: str,
+    *,
+    preserve_completed: bool = False,
+) -> None:
+    """Record an analysis failure without changing the preserved evidence.
+
+    A failed replacement keeps the previous completed advisory result.
+    """
     with get_connection() as connection:
-        connection.execute(
-            """
-            UPDATE cases
-            SET analysis_status = ?, analysis_provider = ?
-            WHERE case_id = ?
-            """,
-            ("ANALYSIS_FAILED", provider, case_id),
-        )
+        if not preserve_completed:
+            connection.execute(
+                """
+                UPDATE cases
+                SET analysis_status = ?, analysis_provider = ?, risk_level = NULL,
+                    scam_type = NULL, summary = NULL, indicators = NULL,
+                    recommended_actions = NULL, limitations = NULL
+                WHERE case_id = ?
+                """,
+                ("ANALYSIS_FAILED", provider, case_id),
+            )
         connection.execute(
             """
             INSERT INTO evidence_events (
@@ -267,3 +288,112 @@ def get_case_events(case_id: str) -> list[dict[str, Any]] | None:
             (case_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def record_analysis_replacement(case: dict[str, Any]) -> None:
+    """Record that a completed advisory result is about to be replaced."""
+    summary = case.get("summary") or "No summary was stored."
+    details = (
+        "Completed analysis was replaced by a new provider run. "
+        f"Prior provider: {case.get('analysis_provider') or 'not recorded'}. "
+        f"Prior risk level: {case.get('risk_level') or 'not recorded'}. "
+        f"Prior summary: {summary}"
+    )
+    if len(details) > 2000:
+        details = details[:1999] + "…"
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO evidence_events (
+                event_id, case_id, event_type, event_timestamp, details
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                case["case_id"],
+                "ANALYSIS_REPLACED",
+                get_utc_timestamp(),
+                details,
+            ),
+        )
+
+
+def record_report(
+    report_id: str,
+    case_id: str,
+    filename: str,
+    content_sha256: str,
+    generated_at: str,
+) -> dict[str, Any] | None:
+    """Store report metadata and a generation event. Return None if the case is gone."""
+    with get_connection() as connection:
+        case = connection.execute(
+            "SELECT 1 FROM cases WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+        if case is None:
+            return None
+        connection.execute(
+            """
+            INSERT INTO reports (
+                report_id, case_id, filename, content_sha256, generated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (report_id, case_id, filename, content_sha256, generated_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence_events (
+                event_id, case_id, event_type, event_timestamp, details
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                case_id,
+                "REPORT_GENERATED",
+                generated_at,
+                f"PDF report {report_id} generated. SHA-256: {content_sha256}.",
+            ),
+        )
+    return {
+        "report_id": report_id,
+        "case_id": case_id,
+        "filename": filename,
+        "content_sha256": content_sha256,
+        "generated_at": generated_at,
+    }
+
+
+def list_reports(case_id: str) -> list[dict[str, Any]] | None:
+    """Return reports for a case, newest first, or None when the case does not exist."""
+    with get_connection() as connection:
+        case = connection.execute(
+            "SELECT 1 FROM cases WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+        if case is None:
+            return None
+        rows = connection.execute(
+            """
+            SELECT report_id, case_id, filename, content_sha256, generated_at
+            FROM reports
+            WHERE case_id = ?
+            ORDER BY generated_at DESC, report_id DESC
+            """,
+            (case_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_report(case_id: str, report_id: str) -> dict[str, Any] | None:
+    """Return one stored report, or None when it does not belong to the case."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT report_id, case_id, filename, content_sha256, generated_at
+            FROM reports
+            WHERE case_id = ? AND report_id = ?
+            """,
+            (case_id, report_id),
+        ).fetchone()
+    return dict(row) if row is not None else None

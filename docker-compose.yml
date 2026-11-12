@@ -1,0 +1,55 @@
+services:
+  api:
+    build: .
+    command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      DATABASE_PATH: /data/scamshield.db
+      REPORTS_DIR: /data/reports
+      SCAMSHIELD_API_KEY: ${SCAMSHIELD_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    volumes:
+      - scamshield-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  workstation:
+    build: .
+    command:
+      [
+        "python",
+        "-m",
+        "streamlit",
+        "run",
+        "frontend/app.py",
+        "--server.address",
+        "0.0.0.0",
+        "--server.port",
+        "8501",
+      ]
+    ports:
+      - "8501:8501"
+    environment:
+      SCAMSHIELD_API_URL: http://api:8000
+      SCAMSHIELD_API_KEY: ${SCAMSHIELD_API_KEY:-}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  scamshield-data:

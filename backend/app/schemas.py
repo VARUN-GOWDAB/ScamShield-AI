@@ -116,3 +116,20 @@ class EvidenceEventResponse(BaseModel):
     event_type: str
     event_timestamp: datetime
     details: str
+
+
+class ReanalyzeRequest(BaseModel):
+    replace_completed: bool = False
+
+
+class ReportResponse(BaseModel):
+    report_id: str
+    case_id: str
+    content_sha256: str
+    generated_at: datetime
+    download_path: str
+
+
+class ReadyResponse(BaseModel):
+    status: str
+    database: str
